@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import cz.xyzt.network.OpenInfiniteInventoryPacket;
 import cz.xyzt.network.SyncInfiniteInventoryPacket;
+import cz.xyzt.network.UpdateInfiniteInventoryPacket;
 
 public class InfiniteInventoryMod implements ModInitializer {
 	public static final String MOD_ID = "infinite_inventory";
@@ -40,6 +41,8 @@ public class InfiniteInventoryMod implements ModInitializer {
 		);
         Registry.register(Registries.SCREEN_HANDLER, INFINITE_INVENTORY_ID, INFINITE_INVENTORY_SCREEN_HANDLER);
 
+        // open inventory
+
 		PayloadTypeRegistry.playC2S().register(OpenInfiniteInventoryPacket.ID, OpenInfiniteInventoryPacket.CODEC);
 
         ServerPlayNetworking.registerGlobalReceiver(
@@ -48,6 +51,8 @@ public class InfiniteInventoryMod implements ModInitializer {
 				InfiniteInventoryMod.openInventory(context.player());
             }
         );
+
+        // sync inventory
 
         PayloadTypeRegistry.playC2S().register(SyncInfiniteInventoryPacket.ID, SyncInfiniteInventoryPacket.CODEC);
 
@@ -61,6 +66,17 @@ public class InfiniteInventoryMod implements ModInitializer {
                 inventoryManager.openInventoryFor(player);
             }
         );
+
+        // update inventory
+
+        PayloadTypeRegistry.playC2S().register(UpdateInfiniteInventoryPacket.ID, UpdateInfiniteInventoryPacket.CODEC);
+
+		ServerPlayNetworking.registerGlobalReceiver(
+            UpdateInfiniteInventoryPacket.ID,
+            (payload, context) -> {
+                ServerPlayNetworking.send(context.player(), new UpdateInfiniteInventoryPacket());
+            }
+		);
 
 		ServerLifecycleEvents.SERVER_STARTED.register(this::onServerStarted);
         ServerLifecycleEvents.SERVER_STOPPING.register(this::onServerStopping);

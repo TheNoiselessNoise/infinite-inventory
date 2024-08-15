@@ -1,12 +1,17 @@
 package cz.xyzt;
 
+import cz.xyzt.network.SyncInfiniteInventoryPacket;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.packet.s2c.play.ScreenHandlerSlotUpdateS2CPacket;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.world.World;
 
@@ -16,6 +21,12 @@ public class InfiniteInventoryScreenHandler extends ScreenHandler {
     private static final int COLUMNS = 9;
     private final PlayerEntity player;
     private final InfiniteInventoryData data;
+
+    private void debugLog(String message) {
+        InfiniteInventoryMod.LOGGER.info("----- [InfiniteInventoryScreenHandler] -----");
+        InfiniteInventoryMod.LOGGER.info(message);
+        InfiniteInventoryMod.LOGGER.info("--------------------------------------------");
+    }
 
     public InfiniteInventoryScreenHandler(int syncId, PlayerInventory playerInventory, PacketByteBuf buf) {
         this(syncId, playerInventory, InfiniteInventoryData.PACKET_CODEC.decode(buf));
@@ -62,6 +73,121 @@ public class InfiniteInventoryScreenHandler extends ScreenHandler {
         return this.inventory.canPlayerUse(player);
     }
 
+    private boolean canCombine(ItemStack stack1, ItemStack stack2) {
+        return !stack1.isEmpty() && !stack2.isEmpty() && 
+            stack1.isOf(stack2.getItem()) && 
+            ItemStack.areItemsEqual(stack1, stack2);
+    }
+
+    @Override
+    public void onSlotClick(int slotIndex, int button, SlotActionType actionType, PlayerEntity player) {
+        if (slotIndex < 0 || slotIndex >= this.slots.size()) {
+            super.onSlotClick(slotIndex, button, actionType, player);
+            return;
+        }
+
+        Slot slot = this.slots.get(slotIndex);
+        ItemStack cursorStack = getCursorStack();
+
+        switch (actionType) {
+            case PICKUP:
+                if (slot.hasStack()) {
+                    if (cursorStack.isEmpty()) {
+                        if (button == 0) {
+                            // Left click: Pick up the entire stack
+                            setCursorStack(slot.getStack().copy());
+                            slot.setStack(ItemStack.EMPTY);
+                        } else if (button == 1) {
+                            // Right click: Split the stack
+                            ItemStack slotStack = slot.getStack();
+                            int amount = (slotStack.getCount() + 1) / 2; // Round up division
+                            ItemStack splitStack = slotStack.copy();
+                            splitStack.setCount(amount);
+                            setCursorStack(splitStack);
+                            slotStack.decrement(amount);
+                            if (slotStack.isEmpty()) {
+                                slot.setStack(ItemStack.EMPTY);
+                            }
+                        }
+                    } else if (canCombine(cursorStack, slot.getStack())) {
+                        // Combine stacks (left-click logic remains the same)
+                        if (button == 0) {
+                            // Left click: try to pick up the entire stack
+                            int amount = Math.min(slot.getStack().getCount(), cursorStack.getMaxCount() - cursorStack.getCount());
+                            cursorStack.increment(amount);
+                            slot.getStack().decrement(amount);
+                            if (slot.getStack().isEmpty()) {
+                                slot.setStack(ItemStack.EMPTY);
+                            }
+                        } else if (button == 1) {
+                            // Right click: place one item from cursor to slot
+                            if (slot.getStack().getCount() < slot.getStack().getMaxCount()) {
+                                slot.getStack().increment(1);
+                                cursorStack.decrement(1);
+                                if (cursorStack.isEmpty()) {
+                                    setCursorStack(ItemStack.EMPTY);
+                                }
+                            }
+                        }
+                    }
+                } else if (!cursorStack.isEmpty()) {
+                    // Place item in empty slot
+                    if (button == 0) {
+                        // Left click: place entire stack
+                        slot.setStack(cursorStack.copy());
+                        setCursorStack(ItemStack.EMPTY);
+                    } else if (button == 1) {
+                        // Right click: place one item
+                        ItemStack oneItem = cursorStack.copy();
+                        oneItem.setCount(1);
+                        slot.setStack(oneItem);
+                        cursorStack.decrement(1);
+                        if (cursorStack.isEmpty()) {
+                            setCursorStack(ItemStack.EMPTY);
+                        }
+                    }
+                }
+                break;
+            case QUICK_MOVE:
+                if (slot.hasStack()) {
+                    ItemStack movedStack = this.quickMove(player, slotIndex);
+                    if (!movedStack.isEmpty()) {
+                        // The quickMove was successful, update the slot
+                        slot.setStack(ItemStack.EMPTY);
+                    }
+                }
+                break;
+            default:
+                super.onSlotClick(slotIndex, button, actionType, player);
+                break;
+        }
+
+        // Sync the inventory with the client
+        World world = player.getWorld();
+        if (!world.isClient) {
+            syncWithClients();
+        }
+
+        sendInventorySync();
+    }
+
+    private void syncWithClients() {
+        for (int i = 0; i < this.slots.size(); i++) {
+            ItemStack stack = this.slots.get(i).getStack();
+            for (ServerPlayerEntity player : ((ServerWorld) this.player.getWorld()).getPlayers()) {
+                player.networkHandler.sendPacket(new ScreenHandlerSlotUpdateS2CPacket(this.syncId, this.nextRevision(), i, stack));
+            }
+        }
+        // Also sync the cursor stack
+        ((ServerPlayerEntity) player).networkHandler.sendPacket(new ScreenHandlerSlotUpdateS2CPacket(-1, this.nextRevision(), -1, this.getCursorStack()));
+    }
+
+    public void setSlot(int index, ItemStack stack) {
+        if (index >= 0 && index < this.slots.size()) {
+            this.slots.get(index).setStack(stack);
+        }
+    }
+
     @Override
     public ItemStack quickMove(PlayerEntity player, int index) {
         ItemStack itemStack = ItemStack.EMPTY;
@@ -73,8 +199,19 @@ public class InfiniteInventoryScreenHandler extends ScreenHandler {
                 if (!this.insertItem(slotStack, this.inventory.size(), this.slots.size(), true)) {
                     return ItemStack.EMPTY;
                 }
-            } else if (!this.insertItem(slotStack, 0, this.inventory.size(), false)) {
-                return ItemStack.EMPTY;
+            } else {
+                boolean inserted = false;
+                for (int i = 0; i < this.inventory.size(); i++) {
+                    if (this.insertItem(slotStack, i, i + 1, false)) {
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    // If the item couldn't be inserted into existing slots, add a new slot
+                    this.inventory.addItemDirect(slotStack.copy());
+                    slotStack.setCount(0);
+                }
             }
 
             if (slotStack.isEmpty()) {
@@ -84,17 +221,13 @@ public class InfiniteInventoryScreenHandler extends ScreenHandler {
             }
         }
 
+        sendInventorySync();
+
         return itemStack;
     }
 
     public InfiniteInventory getInventory() {
         return inventory;
-    }
-
-    public void updateSlots() {
-        for (int i = 0; i < inventory.size(); i++) {
-            this.slots.get(i).setStack(inventory.getStack(i));
-        }
     }
 
     @Override
@@ -122,5 +255,12 @@ public class InfiniteInventoryScreenHandler extends ScreenHandler {
     private void saveInventory(ServerWorld world) {
         MinecraftServer server = world.getServer();
         InventoryManager.saveInventory(server);
+    }
+
+    private void sendInventorySync() {
+        if (player instanceof ServerPlayerEntity serverPlayer) {
+            SyncInfiniteInventoryPacket syncPacket = new SyncInfiniteInventoryPacket(inventory.getAllItems());
+            ServerPlayNetworking.send(serverPlayer, syncPacket);
+        }
     }
 }
