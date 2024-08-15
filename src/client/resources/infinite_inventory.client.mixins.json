@@ -1,0 +1,11 @@
+{
+	"required": true,
+	"package": "cz.xyzt.mixin.client",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"InventoryKeyMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

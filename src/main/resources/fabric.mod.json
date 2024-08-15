@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "infinite_inventory",
+	"version": "${version}",
+	"name": "Infinity Inventory",
+	"description": "Mod adding infinite inventory with search and sorting.",
+	"authors": [
+		"XYZT"
+	],
+	"contact": {
+		"homepage": "https://xyzt.cz/",
+		"sources": "https://github.com/TheNoiselessNoise/infinite-inventory"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/infinite_inventory/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"cz.xyzt.InfiniteInventoryMod"
+		],
+		"client": [
+			"cz.xyzt.InfiniteInventoryModClient"
+		]
+	},
+	"mixins": [
+		"infinite_inventory.mixins.json",
+		"infinite_inventory.client.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.15.11",
+		"minecraft": "~1.21",
+		"java": ">=21",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"another-mod": "*"
+	}
+}
